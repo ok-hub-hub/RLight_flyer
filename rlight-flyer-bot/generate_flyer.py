@@ -17,6 +17,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from pilmoji import Pilmoji
 
 SITE_URL = "https://rlightband.wixsite.com/site"
 USER_AGENT = (
@@ -170,6 +171,12 @@ def detect_issues(lives):
     return warnings
 
 
+def _draw_centered(pilmoji, text, font, y, fill="white"):
+    w, _ = pilmoji.getsize(text, font=font)
+    x = (CANVAS_W - w) // 2
+    pilmoji.text((x, y), text, fill, font=font)
+
+
 def render_flyer(bg_path, lives, target_month):
     # 背景: アスペクト比保ったままクロップして埋める (引き伸ばしなし)
     bg_raw = Image.open(bg_path).convert("RGB")
@@ -177,7 +184,7 @@ def render_flyer(bg_path, lives, target_month):
 
     # 半透明オーバーレイで暗くする
     overlay = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 140))
-    canvas = Image.alpha_composite(bg.convert("RGBA"), overlay)
+    canvas = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(canvas)
 
     font_path = find_japanese_font()
@@ -187,50 +194,50 @@ def render_flyer(bg_path, lives, target_month):
     info_font = ImageFont.truetype(font_path, 40)
     footer_font = ImageFont.truetype(font_path, 42)
 
-    # タイトル
-    title = f"🎸 {target_month}月 Live Schedule 🎸"
-    draw.text((CANVAS_W // 2, 130), title, fill="white", font=title_font, anchor="mm")
+    with Pilmoji(canvas) as pilmoji:
+        # タイトル
+        title = f"🎸 {target_month}月 Live Schedule 🎸"
+        _draw_centered(pilmoji, title, title_font, 90)
 
-    # ライブ情報
-    y = 280
-    for i, live in enumerate(lives):
-        f = extract_fields(live["lines"])
+        # ライブ情報
+        y = 270
+        for i, live in enumerate(lives):
+            f = extract_fields(live["lines"])
 
-        if i > 0:
-            # 区切り線
-            draw.line((140, y, CANVAS_W - 140, y), fill=(255, 255, 255, 180), width=2)
-            y += 70
+            if i > 0:
+                # 区切り線
+                draw.line((140, y, CANVAS_W - 140, y), fill="white", width=2)
+                y += 70
 
-        if f["venue_line"]:
-            draw.text((CANVAS_W // 2, y), f["venue_line"], fill="white", font=venue_font, anchor="mm")
-            y += 75
+            if f["venue_line"]:
+                _draw_centered(pilmoji, f["venue_line"], venue_font, y)
+                y += 75
 
-        if f["event_name"]:
-            draw.text((CANVAS_W // 2, y), f"「{f['event_name']}」", fill="white", font=event_font, anchor="mm")
-            y += 80
+            if f["event_name"]:
+                _draw_centered(pilmoji, f"「{f['event_name']}」", event_font, y)
+                y += 85
 
-        if f["open"]:
-            draw.text((CANVAS_W // 2, y), f"⏳ {f['open']}", fill="white", font=info_font, anchor="mm")
-            y += 65
+            if f["open"]:
+                _draw_centered(pilmoji, f"⏳ {f['open']}", info_font, y)
+                y += 65
 
-        if f["drink"]:
-            draw.text((CANVAS_W // 2, y), f"🍺 {f['drink']}", fill="white", font=info_font, anchor="mm")
-            y += 65
+            if f["drink"]:
+                _draw_centered(pilmoji, f"🍺 {f['drink']}", info_font, y)
+                y += 65
 
-        if f["ticket"]:
-            draw.text((CANVAS_W // 2, y), f"🎫 {f['ticket']}", fill="white", font=info_font, anchor="mm")
-            y += 65
+            if f["ticket"]:
+                _draw_centered(pilmoji, f"🎫 {f['ticket']}", info_font, y)
+                y += 65
 
-        y += 30
+            y += 30
 
-        if y > CANVAS_H - 180:
-            break
+            if y > CANVAS_H - 180:
+                break
 
-    # フッター
-    draw.text((CANVAS_W // 2, CANVAS_H - 110), "ご予約はDMまたはHPまで 🔥",
-              fill="white", font=footer_font, anchor="mm")
+        # フッター
+        _draw_centered(pilmoji, "ご予約はDMまたはHPまで 🔥", footer_font, CANVAS_H - 130)
 
-    canvas.convert("RGB").save(OUTPUT_PATH, "JPEG", quality=92)
+    canvas.save(OUTPUT_PATH, "JPEG", quality=92)
     return OUTPUT_PATH
 
 
