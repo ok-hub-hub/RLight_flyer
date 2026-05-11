@@ -62,7 +62,7 @@ def validate_config(cfg):
 
 def fetch_edit_messages():
     token = os.environ.get("DISCORD_BOT_TOKEN")
-    channel_id = os.environ.get("DISCORD_EDIT_CHANNEL_ID")
+    channel_id = os.environ.get("DISCORD_CHANNEL_ID")
     if not token or not channel_id:
         return []
     res = requests.get(
@@ -74,7 +74,7 @@ def fetch_edit_messages():
 
 def post_to_edit_channel(text):
     token = os.environ.get("DISCORD_BOT_TOKEN")
-    channel_id = os.environ.get("DISCORD_EDIT_CHANNEL_ID")
+    channel_id = os.environ.get("DISCORD_CHANNEL_ID")
     if not token or not channel_id:
         return
     try:
@@ -163,30 +163,37 @@ def main():
 
     for msg in new_messages:
         user_text = msg.get("content", "").strip()
+        has_attachment = bool(msg.get("attachments"))
         if not user_text:
+            # 画像のみのメッセージは画像生成側で処理されるので、ここでは何もしない
+            save_last_processed_id(msg["id"])
+            continue
+        # 短すぎる雑談 (5文字未満) はスキップ
+        if len(user_text) < 5 and not has_attachment:
             save_last_processed_id(msg["id"])
             continue
         print(f"→ 処理中: {user_text[:60]}")
         try:
             result = call_gemini(config, user_text)
             if "error" in result:
-                post_to_edit_channel(f"❓ <{msg['author']['username']}> の依頼: {result['error']}")
+                # エラー時は静かにスキップ (雑談を誤検知してた可能性が高いので)
+                print(f"  スキップ: {result['error']}")
             else:
                 new_config = validate_config(result)
-                # マージ (空にされないように既存値を保持)
-                for k, v in new_config.items():
-                    if isinstance(v, dict) and isinstance(config.get(k), dict):
-                        config[k] = {**config[k], **v}
-                    else:
-                        config[k] = v
-                save_config(config)
-                config_changed = True
-                post_to_edit_channel(
-                    f"✅ <{msg['author']['username']}> の依頼を反映: 「{user_text[:80]}」\n"
-                    f"5分以内に新しい画像が #general に届きます。")
+                # 変更があったかチェック (空のレスポンスでconfigが消えないように)
+                if new_config != {k: config.get(k) for k in new_config}:
+                    for k, v in new_config.items():
+                        if isinstance(v, dict) and isinstance(config.get(k), dict):
+                            config[k] = {**config[k], **v}
+                        else:
+                            config[k] = v
+                    save_config(config)
+                    config_changed = True
+                    post_to_edit_channel(
+                        f"✅ <@{msg['author']['id']}> の依頼を反映：「{user_text[:80]}」\n"
+                        f"5分以内に新しいフライヤーが届きます。")
         except Exception as e:
             print(f"  エラー: {e}", file=sys.stderr)
-            post_to_edit_channel(f"⚠️ 処理エラー: {e}")
         finally:
             save_last_processed_id(msg["id"])
             time.sleep(1)  # Gemini APIのレート制限を避ける

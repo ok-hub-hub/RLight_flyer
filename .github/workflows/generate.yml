@@ -43,7 +43,7 @@ jobs:
       - name: Process AI edit requests
         env:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
-          DISCORD_EDIT_CHANNEL_ID: ${{ secrets.DISCORD_EDIT_CHANNEL_ID }}
+          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python ai_edit_processor.py
 
