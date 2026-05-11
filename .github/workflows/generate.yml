@@ -8,8 +8,15 @@ on:
         required: false
         default: ""
   schedule:
-    # 毎月1日 00:00 UTC = 09:00 JST
-    - cron: "0 0 1 * *"
+    # 5分ごとに #flyer-bg をチェック。新画像があれば生成。
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: generate-flyer
+  cancel-in-progress: false
 
 jobs:
   generate:
@@ -40,12 +47,28 @@ jobs:
           DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
           TARGET_MONTH: ${{ github.event.inputs.target_month }}
+          POLLING_MODE: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
         run: python generate_flyer.py
 
+      - name: Commit state if changed
+        working-directory: .
+        run: |
+          if [ -n "$(git status --porcelain rlight-flyer-bot/.state/)" ]; then
+            git config user.email "actions@github.com"
+            git config user.name "GitHub Actions"
+            git add rlight-flyer-bot/.state/
+            git commit -m "Update polling state [skip ci]"
+            git push
+          else
+            echo "No state changes."
+          fi
+
       - name: Upload generated images
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: flyer
+          name: flyer-${{ github.run_id }}
           path: |
             rlight-flyer-bot/output.jpg
             rlight-flyer-bot/output_template.jpg
+          if-no-files-found: ignore

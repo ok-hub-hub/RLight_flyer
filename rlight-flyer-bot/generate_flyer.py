@@ -361,12 +361,37 @@ def post_to_discord(output_path, template_path, lives, target_month, warnings):
 
 # ---------- Main ----------
 
+STATE_FILE = ROOT / ".state" / "last_image_msg_id.txt"
+
+
+def find_latest_image_message(messages):
+    for msg in messages:
+        for att in msg.get("attachments", []):
+            if att.get("content_type", "").startswith("image/"):
+                return msg
+    return None
+
+
 def main():
     target_month = int(os.environ.get("TARGET_MONTH") or datetime.date.today().month)
-    print(f"対象月: {target_month}月")
+    polling_mode = os.environ.get("POLLING_MODE") == "true"
+    print(f"対象月: {target_month}月 (polling_mode: {polling_mode})")
 
     messages = fetch_discord_messages()
     print(f"Discord メッセージ取得: {len(messages)}件")
+
+    latest_image_msg = find_latest_image_message(messages)
+
+    # ポーリングモードでは「新しい画像があるか」だけ確認、なければ即終了
+    if polling_mode:
+        if not latest_image_msg:
+            print("画像なし。スキップ。")
+            return
+        last_id = STATE_FILE.read_text().strip() if STATE_FILE.exists() else ""
+        if last_id == latest_image_msg["id"]:
+            print(f"前回と同じ画像 (msg_id: {last_id})。スキップ。")
+            return
+        print(f"新しい画像検知 (msg_id: {latest_image_msg['id']})。生成開始。")
 
     discord_bg = fetch_discord_background(messages) if messages else None
     if discord_bg:
@@ -396,6 +421,12 @@ def main():
     print(f"生成完了: {output_path}, {template_path}")
 
     post_to_discord(output_path, template_path, lives, target_month, warnings)
+
+    # 処理済みID保存 (手動実行時もポーリング側で同じ画像を再処理しないように)
+    if latest_image_msg:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(latest_image_msg["id"])
+        print(f"状態保存: {latest_image_msg['id']}")
 
 
 if __name__ == "__main__":
