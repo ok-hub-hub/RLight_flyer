@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 from pilmoji import Pilmoji
 
 SITE_URL = "https://rlightband.wixsite.com/site"
@@ -256,17 +256,14 @@ def find_japanese_font():
     raise FileNotFoundError("日本語フォントが見つかりません")
 
 
-def make_bg(bg_path, blur_radius=40):
-    """画像のアスペクト比を保ったまま枠内に収め、余白には同じ画像のぼかし版を敷く"""
+def make_bg(bg_path):
+    """画像のアスペクト比を保ったまま枠内に収める。余白は黒。"""
     img = Image.open(bg_path).convert("RGB")
     iw, ih = img.size
     scale = min(CANVAS_W / iw, CANVAS_H / ih)
     nw, nh = int(iw * scale), int(ih * scale)
     contained = img.resize((nw, nh), Image.LANCZOS)
-    # 背景はぼかしたバージョンで埋める
-    filler = ImageOps.fit(img, (CANVAS_W, CANVAS_H), Image.LANCZOS).filter(
-        ImageFilter.GaussianBlur(blur_radius))
-    canvas = filler
+    canvas = Image.new("RGB", (CANVAS_W, CANVAS_H), (0, 0, 0))
     x = (CANVAS_W - nw) // 2
     y = (CANVAS_H - nh) // 2
     canvas.paste(contained, (x, y))
