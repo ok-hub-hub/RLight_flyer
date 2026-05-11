@@ -131,15 +131,18 @@ def parse_discord_supplements(messages, target_month):
 
 def merge_supplements(lives, supplements):
     by_date = {}
+    titles = {}
     for live in lives:
         m, d = map(int, live["date"].split("/"))
         by_date[(m, d)] = list(live["lines"])
+        titles[(m, d)] = live.get("event_title", "")
     for key, lines in supplements.items():
         existing = by_date.setdefault(key, [])
         for line in lines:
             if line not in existing:
                 existing.append(line)
-    return [{"date": f"{m}/{d}", "lines": by_date[(m, d)]}
+    return [{"date": f"{m}/{d}", "lines": by_date[(m, d)],
+             "event_title": titles.get((m, d), "")}
             for (m, d) in sorted(by_date.keys())]
 
 
@@ -152,6 +155,85 @@ def fetch_schedule_html() -> str:
 
 
 def parse_lives(html: str, target_month: int):
+    """Wix サイトの内部JSON (RICOS) からイベント情報を抽出。
+    各イベントは "sh":"YYYY.MM.DD(...)..." の見出しを持ち、
+    その直前のテキスト群がそのイベントの本文。"""
+    sh_pattern = re.compile(r'"sh":"((?:\d{4}\.)?\d{1,2}\.\d{1,2}[^"]{0,80})"')
+    text_pattern = re.compile(r'"text":"([^"\\]*(?:\\.[^"\\]*)*)"')
+    date_in_sh = re.compile(r'(?:(\d{4})\.)?(\d{1,2})\.(\d{1,2})')
+
+    publish_re = re.compile(r'_publishDate')
+    title_re = re.compile(r'"title":"([^"]*)"')
+    by_date = {}
+    prev_end = 0
+    for m in sh_pattern.finditer(html):
+        date_str = m.group(1)
+        dm = date_in_sh.search(date_str)
+        if not dm:
+            prev_end = m.end()
+            continue
+        month = int(dm.group(2))
+        day = int(dm.group(3))
+        if not (1 <= month <= 12 and 1 <= day <= 31):
+            prev_end = m.end()
+            continue
+        # 該当イベントの JSON ブロック開始位置: 直前の _publishDate
+        pub_matches = list(publish_re.finditer(html[prev_end:m.start()]))
+        if pub_matches:
+            block_start = prev_end + pub_matches[-1].start()
+        else:
+            block_start = prev_end
+        block = html[block_start:m.start()]
+        # タイトル(イベント名)を抽出
+        title_m = title_re.search(block)
+        event_title = ""
+        if title_m and title_m.group(1):
+            title_text = title_m.group(1).replace('\\/', '/').replace('\\n', '\n').replace('\\"', '"')
+            # 改行があれば一番目立つ部分(通常は最後の「...」行)を選ぶ
+            for ln in title_text.split('\n'):
+                ln = clean_line(ln)
+                if ln:
+                    if '「' in ln and '」' in ln:
+                        event_title = ln
+                        break
+                    if not event_title:
+                        event_title = ln
+        lines = [date_str]
+        # ブロック内のテキストを抽出
+        for tm in text_pattern.finditer(block):
+            txt = tm.group(1).replace('\\/', '/').replace('\\n', '\n').replace('\\"', '"')
+            txt = clean_line(txt)
+            if txt:
+                lines.append(txt)
+        prev_end = m.end()
+        if month != target_month:
+            continue
+        key = (month, day)
+        seen = set()
+        unique = []
+        for line in lines:
+            if line in seen:
+                continue
+            seen.add(line)
+            unique.append(line)
+        by_date[key] = {"lines": unique, "event_title": event_title}
+
+    if not by_date:
+        # フォールバック: 見出し JSON が見つからない場合は古いHTMLパースを試す
+        return _parse_lives_html_fallback(html, target_month)
+
+    lives = []
+    for key in sorted(by_date.keys()):
+        v = by_date[key]
+        lives.append({
+            "date": f"{key[0]}/{key[1]}",
+            "lines": v["lines"],
+            "event_title": v.get("event_title", ""),
+        })
+    return lives
+
+
+def _parse_lives_html_fallback(html, target_month):
     soup = BeautifulSoup(html, "html.parser")
     all_lines = []
     for el in soup.find_all(["p", "div", "span", "h1", "h2", "h3", "li"]):
@@ -162,7 +244,6 @@ def parse_lives(html: str, target_month: int):
             line = clean_line(line)
             if line and (not all_lines or all_lines[-1] != line):
                 all_lines.append(line)
-
     date_re = re.compile(r"(?:(\d{4})[/年\-\.])?(\d{1,2})[/月\-\.](\d{1,2})日?")
     by_date = {}
     current_key = None
@@ -171,7 +252,8 @@ def parse_lives(html: str, target_month: int):
             current_key = None
             continue
         m = date_re.search(line)
-        if m:
+        is_valid = m and (1 <= int(m.group(2)) <= 12) and (1 <= int(m.group(3)) <= 31)
+        if is_valid:
             month = int(m.group(2))
             day = int(m.group(3))
             if month == target_month:
@@ -183,7 +265,6 @@ def parse_lives(html: str, target_month: int):
                 continue
         if current_key is not None:
             by_date[current_key].append(line)
-
     lives = []
     for key in sorted(by_date.keys()):
         seen = set()
@@ -193,7 +274,7 @@ def parse_lives(html: str, target_month: int):
                 continue
             seen.add(line)
             unique.append(line)
-        lives.append({"date": f"{key[0]}/{key[1]}", "lines": unique})
+        lives.append({"date": f"{key[0]}/{key[1]}", "lines": unique, "event_title": ""})
     return lives
 
 
@@ -202,9 +283,13 @@ def parse_lives(html: str, target_month: int):
 def extract_fields(lines):
     fields = {"venue_line": "", "event_name": "", "open": "", "drink": "", "ticket": ""}
     leftover = []
+    ticket_lines = []
     for line in lines:
         if not fields["venue_line"] and re.search(r"\d{4}\.\d{1,2}\.\d{1,2}|\d{1,2}/\d{1,2}", line):
             fields["venue_line"] = line
+            continue
+        # 配信関連は除外 (フライヤーには会場分のみ載せる)
+        if re.search(r"配信|ツイキャス|twitcasting|アーカイブ|premier\.", line, re.IGNORECASE):
             continue
         if re.search(r"OPEN|START|開場|開演", line, re.IGNORECASE):
             fields["open"] = line
@@ -213,18 +298,12 @@ def extract_fields(lines):
             fields["drink"] = line
             continue
         if re.search(r"ADV|DOOR|TICKET|チケット|前売|当日|U-?\d+|[¥￥]\d", line, re.IGNORECASE):
-            if fields["ticket"]:
-                fields["ticket"] = fields["ticket"] + " / " + line
-            else:
-                fields["ticket"] = line
+            ticket_lines.append(line)
             continue
         leftover.append(line)
-    for line in leftover:
-        if line.startswith("w/") or line.lower() == "w":
-            continue
-        if not fields["event_name"]:
-            fields["event_name"] = line
-            break
+    # チケット情報は最大2行までを「 / 」で連結
+    if ticket_lines:
+        fields["ticket"] = " / ".join(ticket_lines[:2])
     return fields
 
 
@@ -332,6 +411,8 @@ def render_flyer(bg_path, lives, target_month):
         slot_h = (EVENTS_BOTTOM - EVENTS_TOP) / n
         for i, live in enumerate(lives):
             f = extract_fields(live["lines"])
+            # イベント名は parse_lives で抽出した title を優先
+            f["event_name"] = live.get("event_title", "")
             # Merge extra_info if available for this date
             extra = CONFIG.get("extra_info", {}).get(live["date"], {})
             for k in ("open", "drink", "ticket", "event_name", "venue_line"):
