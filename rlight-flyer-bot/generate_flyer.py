@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     "stroke_width": 3,
     "font_sizes": {"title": 84, "venue": 50, "event": 46, "info": 42, "footer": 44},
     "extra_info": {},
+    "canva_template_url": "",
 }
 
 
@@ -463,6 +464,31 @@ def pick_background(month: int) -> Path:
 
 # ---------- Posting ----------
 
+def build_canva_copy_text(lives, target_month):
+    """Canva にコピペするための整形テキスト"""
+    lines = [f"{target_month}月 Live Schedule", ""]
+    for live in lives:
+        f = extract_fields(live["lines"])
+        f["event_name"] = live.get("event_title", "")
+        extra = CONFIG.get("extra_info", {}).get(live["date"], {})
+        for k in ("open", "drink", "ticket", "event_name", "venue_line"):
+            if not f[k] and extra.get(k):
+                f[k] = extra[k]
+        if f["venue_line"]:
+            lines.append(f["venue_line"])
+        if f["event_name"]:
+            lines.append(f"「{f['event_name']}」")
+        if f["open"]:
+            lines.append(f["open"])
+        if f["drink"]:
+            lines.append(f["drink"])
+        if f["ticket"]:
+            lines.append(f["ticket"])
+        lines.append("")
+    lines.append(CONFIG.get("footer", ""))
+    return "\n".join(lines)
+
+
 def post_to_discord(output_path, template_path, lives, target_month, warnings):
     webhook = os.environ.get("DISCORD_WEBHOOK")
     if not webhook:
@@ -475,8 +501,21 @@ def post_to_discord(output_path, template_path, lives, target_month, warnings):
         summary.append("")
         summary.append("**チェック結果**")
         summary.extend(warnings)
-    summary.append("")
-    summary.append("📎 編集用テンプレート (背景のみ・薄い暗幕付き) も添付しています。Canva等でテキストを載せ替え可能。")
+
+    canva_url = CONFIG.get("canva_template_url", "").strip()
+    if canva_url:
+        summary.append("")
+        summary.append(f"🎨 **Canvaで編集** → {canva_url}")
+        summary.append("リンクを開いて「このテンプレートを使う」で自分用に複製してください。")
+        summary.append("")
+        summary.append("📋 **コピペ用テキスト**")
+        summary.append("```")
+        summary.append(build_canva_copy_text(lives, target_month))
+        summary.append("```")
+    else:
+        summary.append("")
+        summary.append("📎 編集用テンプレート (背景のみ) も添付。Canva等で再配置できます。")
+
     payload = {"content": "\n".join(summary)}
     with open(output_path, "rb") as f1, open(template_path, "rb") as f2:
         res = requests.post(

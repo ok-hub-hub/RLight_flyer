@@ -19,7 +19,7 @@ DISCORD_API = "https://discord.com/api/v10"
 GEMINI_API = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 ALLOWED_KEYS = {"title", "footer", "emojis", "overlay_opacity",
-                "stroke_width", "font_sizes", "extra_info"}
+                "stroke_width", "font_sizes", "extra_info", "canva_template_url"}
 ALLOWED_EMOJI_KEYS = {"open", "drink", "ticket"}
 ALLOWED_FONT_KEYS = {"title", "venue", "event", "info", "footer"}
 ALLOWED_EXTRA_KEYS = {"venue_line", "event_name", "open", "drink", "ticket"}
@@ -57,6 +57,9 @@ def validate_config(cfg):
             out[k] = max(0, min(10, int(v)))
         elif k in ("title", "footer") and isinstance(v, str):
             out[k] = v[:200]
+        elif k == "canva_template_url" and isinstance(v, str):
+            if v == "" or v.startswith(("https://www.canva.com", "https://canva.com")):
+                out[k] = v[:500]
     return out
 
 
@@ -106,7 +109,15 @@ def call_gemini(current_config, user_request):
 
 ルール:
 - 依頼で言及されたフィールド以外は現在の値を維持してください
-- 編集可能なフィールド: title (string, {{month}} プレースホルダ可), footer (string), emojis (open/drink/ticket), overlay_opacity (0-255), stroke_width (0-10), font_sizes (title/venue/event/info/footer), extra_info (日付ごとの追加情報 "M/D"形式キー、値はvenue_line/event_name/open/drink/ticket)
+- 編集可能なフィールド:
+  - title (string, {{month}} プレースホルダ可)
+  - footer (string)
+  - emojis (open/drink/ticket)
+  - overlay_opacity (0-255)
+  - stroke_width (0-10)
+  - font_sizes (title/venue/event/info/footer)
+  - extra_info (日付ごとの追加情報 "M/D"形式キー、値はvenue_line/event_name/open/drink/ticket)
+  - canva_template_url (string, Canva の共有リンク https://www.canva.com/... 形式)
 - これら以外のフィールドの追加・変更は無視する
 - 不明確な依頼や危険な依頼の場合は、 {{"error": "理由"}} を返す
 - マークダウンや説明文は不要。**JSONのみ**を返す。"""
