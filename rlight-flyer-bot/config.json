@@ -1,0 +1,19 @@
+{
+  "title": "🎸 {month}月 Live Schedule 🎸",
+  "footer": "ご予約はDMまたはHPまで 🔥",
+  "emojis": {
+    "open": "⏳",
+    "drink": "🍺",
+    "ticket": "🎫"
+  },
+  "overlay_opacity": 145,
+  "stroke_width": 3,
+  "font_sizes": {
+    "title": 84,
+    "venue": 50,
+    "event": 46,
+    "info": 42,
+    "footer": 44
+  },
+  "extra_info": {}
+}

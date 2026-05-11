@@ -27,6 +27,7 @@ USER_AGENT = (
 
 ROOT = Path(__file__).parent
 BG_DIR = ROOT / "backgrounds"
+CONFIG_PATH = ROOT / "config.json"
 OUTPUT_PATH = ROOT / "output.jpg"
 TEMPLATE_PATH = ROOT / "output_template.jpg"
 
@@ -35,6 +36,34 @@ CANVAS_W, CANVAS_H = 1080, 1920
 STOP_KEYWORDS = {"NEXT LIVE", "PAST LIVE", "LIVE INFO", "SCHEDULE", "LIVE"}
 
 DISCORD_API = "https://discord.com/api/v10"
+
+DEFAULT_CONFIG = {
+    "title": "🎸 {month}月 Live Schedule 🎸",
+    "footer": "ご予約はDMまたはHPまで 🔥",
+    "emojis": {"open": "⏳", "drink": "🍺", "ticket": "🎫"},
+    "overlay_opacity": 145,
+    "stroke_width": 3,
+    "font_sizes": {"title": 84, "venue": 50, "event": 46, "info": 42, "footer": 44},
+    "extra_info": {},
+}
+
+
+def load_config():
+    cfg = dict(DEFAULT_CONFIG)
+    if CONFIG_PATH.exists():
+        try:
+            user_cfg = json.loads(CONFIG_PATH.read_text())
+            for k, v in user_cfg.items():
+                if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                    cfg[k] = {**cfg[k], **v}
+                else:
+                    cfg[k] = v
+        except Exception as e:
+            print(f"⚠️ config.json読み込みエラー: {e}, デフォルト使用", file=sys.stderr)
+    return cfg
+
+
+CONFIG = load_config()
 
 
 def clean_line(s: str) -> str:
@@ -272,29 +301,42 @@ def make_bg(bg_path):
 
 def render_flyer(bg_path, lives, target_month):
     bg = make_bg(bg_path)
-    overlay = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 145))
+    overlay = Image.new("RGBA", (CANVAS_W, CANVAS_H),
+                       (0, 0, 0, int(CONFIG["overlay_opacity"])))
     canvas = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(canvas)
 
     font_path = find_japanese_font()
-    title_font = ImageFont.truetype(font_path, 84)
-    venue_font = ImageFont.truetype(font_path, 50)
-    event_font = ImageFont.truetype(font_path, 46)
-    info_font = ImageFont.truetype(font_path, 42)
-    footer_font = ImageFont.truetype(font_path, 44)
+    fs = CONFIG["font_sizes"]
+    title_font = ImageFont.truetype(font_path, fs["title"])
+    venue_font = ImageFont.truetype(font_path, fs["venue"])
+    event_font = ImageFont.truetype(font_path, fs["event"])
+    info_font = ImageFont.truetype(font_path, fs["info"])
+    footer_font = ImageFont.truetype(font_path, fs["footer"])
 
     TITLE_Y = 120
     EVENTS_TOP = 280
     EVENTS_BOTTOM = CANVAS_H - 200
     FOOTER_Y = CANVAS_H - 110
 
+    emojis = CONFIG["emojis"]
+    stroke = CONFIG["stroke_width"]
+
+    def draw_(p, text, font, y):
+        _draw_centered(p, text, font, y, stroke=stroke)
+
     with Pilmoji(canvas) as pilmoji:
-        _draw_centered(pilmoji, f"🎸 {target_month}月 Live Schedule 🎸",
-                       title_font, TITLE_Y)
+        title = CONFIG["title"].format(month=target_month)
+        draw_(pilmoji, title, title_font, TITLE_Y)
         n = max(1, len(lives))
         slot_h = (EVENTS_BOTTOM - EVENTS_TOP) / n
         for i, live in enumerate(lives):
             f = extract_fields(live["lines"])
+            # Merge extra_info if available for this date
+            extra = CONFIG.get("extra_info", {}).get(live["date"], {})
+            for k in ("open", "drink", "ticket", "event_name", "venue_line"):
+                if not f[k] and extra.get(k):
+                    f[k] = extra[k]
             slot_top = EVENTS_TOP + i * slot_h
             slot_center = slot_top + slot_h / 2
             if i > 0:
@@ -303,17 +345,16 @@ def render_flyer(bg_path, lives, target_month):
             content_h = _event_height(f)
             y = int(slot_center - content_h / 2)
             if f["venue_line"]:
-                _draw_centered(pilmoji, f["venue_line"], venue_font, y); y += 80
+                draw_(pilmoji, f["venue_line"], venue_font, y); y += 80
             if f["event_name"]:
-                _draw_centered(pilmoji, f"「{f['event_name']}」", event_font, y); y += 90
+                draw_(pilmoji, f"「{f['event_name']}」", event_font, y); y += 90
             if f["open"]:
-                _draw_centered(pilmoji, f"⏳ {f['open']}", info_font, y); y += 70
+                draw_(pilmoji, f"{emojis['open']} {f['open']}", info_font, y); y += 70
             if f["drink"]:
-                _draw_centered(pilmoji, f"🍺 {f['drink']}", info_font, y); y += 70
+                draw_(pilmoji, f"{emojis['drink']} {f['drink']}", info_font, y); y += 70
             if f["ticket"]:
-                _draw_centered(pilmoji, f"🎫 {f['ticket']}", info_font, y); y += 70
-        _draw_centered(pilmoji, "ご予約はDMまたはHPまで 🔥",
-                       footer_font, FOOTER_Y)
+                draw_(pilmoji, f"{emojis['ticket']} {f['ticket']}", info_font, y); y += 70
+        draw_(pilmoji, CONFIG["footer"], footer_font, FOOTER_Y)
 
     canvas.save(OUTPUT_PATH, "JPEG", quality=92)
     return OUTPUT_PATH
@@ -373,6 +414,7 @@ def post_to_discord(output_path, template_path, lives, target_month, warnings):
 # ---------- Main ----------
 
 STATE_FILE = ROOT / ".state" / "last_image_msg_id.txt"
+CONFIG_HASH_FILE = ROOT / ".state" / "last_config_hash.txt"
 
 
 def find_latest_image_message(messages):
@@ -381,6 +423,11 @@ def find_latest_image_message(messages):
             if att.get("content_type", "").startswith("image/"):
                 return msg
     return None
+
+
+def config_hash():
+    import hashlib
+    return hashlib.sha256(CONFIG_PATH.read_bytes()).hexdigest()[:16] if CONFIG_PATH.exists() else ""
 
 
 def main():
@@ -392,17 +439,24 @@ def main():
     print(f"Discord メッセージ取得: {len(messages)}件")
 
     latest_image_msg = find_latest_image_message(messages)
+    current_cfg_hash = config_hash()
 
-    # ポーリングモードでは「新しい画像があるか」だけ確認、なければ即終了
+    # ポーリングモード: 画像 OR config の変更を検知、どちらも無ければスキップ
     if polling_mode:
-        if not latest_image_msg:
-            print("画像なし。スキップ。")
-            return
         last_id = STATE_FILE.read_text().strip() if STATE_FILE.exists() else ""
-        if last_id == latest_image_msg["id"]:
-            print(f"前回と同じ画像 (msg_id: {last_id})。スキップ。")
+        last_cfg = CONFIG_HASH_FILE.read_text().strip() if CONFIG_HASH_FILE.exists() else ""
+        image_changed = latest_image_msg and last_id != latest_image_msg["id"]
+        config_changed = current_cfg_hash and last_cfg != current_cfg_hash
+        if not image_changed and not config_changed:
+            if not latest_image_msg:
+                print("画像なし、config変更なし。スキップ。")
+            else:
+                print(f"画像・config共に前回と同じ。スキップ。")
             return
-        print(f"新しい画像検知 (msg_id: {latest_image_msg['id']})。生成開始。")
+        reason = []
+        if image_changed: reason.append("新画像")
+        if config_changed: reason.append("config変更")
+        print(f"検知: {', '.join(reason)}。生成開始。")
 
     discord_bg = fetch_discord_background(messages) if messages else None
     if discord_bg:
@@ -433,11 +487,14 @@ def main():
 
     post_to_discord(output_path, template_path, lives, target_month, warnings)
 
-    # 処理済みID保存 (手動実行時もポーリング側で同じ画像を再処理しないように)
+    # 状態保存 (手動実行時もポーリング側で同じものを再処理しないように)
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     if latest_image_msg:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         STATE_FILE.write_text(latest_image_msg["id"])
-        print(f"状態保存: {latest_image_msg['id']}")
+        print(f"状態保存 image: {latest_image_msg['id']}")
+    if current_cfg_hash:
+        CONFIG_HASH_FILE.write_text(current_cfg_hash)
+        print(f"状態保存 config: {current_cfg_hash}")
 
 
 if __name__ == "__main__":

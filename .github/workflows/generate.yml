@@ -8,7 +8,6 @@ on:
         required: false
         default: ""
   schedule:
-    # 5分ごとに #flyer-bg をチェック。新画像があれば生成。
     - cron: "*/5 * * * *"
 
 permissions:
@@ -41,6 +40,13 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Process AI edit requests
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_EDIT_CHANNEL_ID: ${{ secrets.DISCORD_EDIT_CHANNEL_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python ai_edit_processor.py
+
       - name: Generate flyer
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
@@ -50,17 +56,17 @@ jobs:
           POLLING_MODE: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
         run: python generate_flyer.py
 
-      - name: Commit state if changed
+      - name: Commit state and config if changed
         working-directory: .
         run: |
-          if [ -n "$(git status --porcelain rlight-flyer-bot/.state/)" ]; then
+          if [ -n "$(git status --porcelain rlight-flyer-bot/.state/ rlight-flyer-bot/config.json)" ]; then
             git config user.email "actions@github.com"
             git config user.name "GitHub Actions"
-            git add rlight-flyer-bot/.state/
-            git commit -m "Update polling state [skip ci]"
+            git add rlight-flyer-bot/.state/ rlight-flyer-bot/config.json
+            git commit -m "Update state/config [skip ci]"
             git push
           else
-            echo "No state changes."
+            echo "No state/config changes."
           fi
 
       - name: Upload generated images
