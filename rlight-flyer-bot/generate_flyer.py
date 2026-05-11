@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
 from pilmoji import Pilmoji
 
 SITE_URL = "https://rlightband.wixsite.com/site"
@@ -256,10 +256,26 @@ def find_japanese_font():
     raise FileNotFoundError("日本語フォントが見つかりません")
 
 
+def make_bg(bg_path, blur_radius=40):
+    """画像のアスペクト比を保ったまま枠内に収め、余白には同じ画像のぼかし版を敷く"""
+    img = Image.open(bg_path).convert("RGB")
+    iw, ih = img.size
+    scale = min(CANVAS_W / iw, CANVAS_H / ih)
+    nw, nh = int(iw * scale), int(ih * scale)
+    contained = img.resize((nw, nh), Image.LANCZOS)
+    # 背景はぼかしたバージョンで埋める
+    filler = ImageOps.fit(img, (CANVAS_W, CANVAS_H), Image.LANCZOS).filter(
+        ImageFilter.GaussianBlur(blur_radius))
+    canvas = filler
+    x = (CANVAS_W - nw) // 2
+    y = (CANVAS_H - nh) // 2
+    canvas.paste(contained, (x, y))
+    return canvas
+
+
 def render_flyer(bg_path, lives, target_month):
-    bg_raw = Image.open(bg_path).convert("RGB")
-    bg = ImageOps.fit(bg_raw, (CANVAS_W, CANVAS_H), method=Image.LANCZOS, centering=(0.5, 0.5))
-    overlay = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 175))
+    bg = make_bg(bg_path)
+    overlay = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 145))
     canvas = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
     draw = ImageDraw.Draw(canvas)
 
@@ -308,11 +324,9 @@ def render_flyer(bg_path, lives, target_month):
 
 def render_template(bg_path):
     """テキストなしの編集用テンプレート (Canva等で文字を載せ替えやすいよう、
-    クロップ済みかつ薄い暗幕付きの素材) を生成"""
-    bg_raw = Image.open(bg_path).convert("RGB")
-    bg = ImageOps.fit(bg_raw, (CANVAS_W, CANVAS_H), method=Image.LANCZOS, centering=(0.5, 0.5))
-    # 薄めの暗幕 (テキスト乗せたときに読めるが、写真も残る程度)
-    overlay = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 90))
+    全体が見えるレイアウト+薄い暗幕付き)"""
+    bg = make_bg(bg_path)
+    overlay = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 60))
     out = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
     out.save(TEMPLATE_PATH, "JPEG", quality=92)
     return TEMPLATE_PATH
