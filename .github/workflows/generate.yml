@@ -1,0 +1,44 @@
+name: Generate Monthly Flyer
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_month:
+        description: "対象月 (1-12, 空欄なら今月)"
+        required: false
+        default: ""
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rlight-flyer-bot
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Japanese fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji
+        working-directory: .
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate flyer
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          TARGET_MONTH: ${{ github.event.inputs.target_month }}
+        run: python generate_flyer.py
+
+      - name: Upload generated image
+        uses: actions/upload-artifact@v4
+        with:
+          name: flyer
+          path: rlight-flyer-bot/output.jpg
