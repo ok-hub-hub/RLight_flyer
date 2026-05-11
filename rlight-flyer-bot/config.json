@@ -9,11 +9,11 @@
   "overlay_opacity": 145,
   "stroke_width": 3,
   "font_sizes": {
-    "title": 84,
-    "venue": 50,
-    "event": 46,
-    "info": 42,
-    "footer": 44
+    "title": 75,
+    "venue": 45,
+    "event": 41,
+    "info": 38,
+    "footer": 40
   },
   "extra_info": {}
 }
